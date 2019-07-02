@@ -38,16 +38,18 @@ struct Item {
 // Can complete make any item, thus can complete any order
 // Gets instructions for what food to make
 struct Worker {
+    id: usize,
     order_inbox: Receiver<Item>,
     cafe_bar: Sender<Item>,
 }
 
 impl Worker {
-    fn new(order_inbox: Receiver<Item>, cafe_bar: Sender<Item>) -> Self {
-        Worker { order_inbox, cafe_bar }
+    fn new(id: usize, order_inbox: Receiver<Item>, cafe_bar: Sender<Item>) -> Self {
+        Worker { id, order_inbox, cafe_bar }
     }
 
     fn work(&self) -> JoinHandle<()> {
+        println!("Spawning worker {}", self.id);
         thread::spawn(|| {
             thread::sleep(Duration::from_millis(1000));
         })
@@ -57,8 +59,22 @@ impl Worker {
 // Arbiter between Customers and the Workers. Takes Orders from Customers, collects payment,
 // dispatches Items in Orders to Worker(s)
 struct Cashier {
+    id: usize,
     customer_orders: Receiver<Order>,
     order_outbox: Sender<Item>,
+}
+
+impl Cashier {
+    fn new(id: usize, customer_orders: Receiver<Order>, order_outbox: Sender<Item>) -> Self {
+        Cashier { id, customer_orders, order_outbox }
+    }
+
+    fn work(&self) -> JoinHandle<()> {
+        println!("Spawning cashier {}", self.id);
+        thread::spawn(|| {
+            thread::sleep(Duration::from_millis(1000));
+        })
+    }
 }
 
 // Items are set here after being made.
@@ -71,6 +87,7 @@ struct CafeBar {
 // A customer goes to the Cashier to make an Order, then occasionally checks the CafeBar to see
 // if their items have been made. They leave the store once they get all of the items in their order.
 struct Customer {
+    id: usize,
     order: Order,
     cashier: Sender<Order>,
     cafe_bar: Receiver<Item> // NOTE: customer picks up items as they come? or will wait until all items have been placed on the bar?
@@ -80,6 +97,7 @@ impl Customer {
     fn new(id: usize, cashier: Sender<Order>, cafe_bar: Receiver<Item>) -> Self {
         // TODO: generate random items for each order
         Customer {
+            id,
             order: Order {
                 items: vec![],
                 customer_id: id
@@ -90,7 +108,7 @@ impl Customer {
     }
 
     fn work(&self) -> JoinHandle<()> {
-        println!("Spawning customer {}", self.order.customer_id);
+        println!("Spawning customer {}", self.id);
         thread::spawn(|| {
             thread::sleep(Duration::from_millis(1000));
         })
