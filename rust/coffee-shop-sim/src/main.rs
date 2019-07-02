@@ -1,11 +1,14 @@
 #[macro_use]
 extern crate lazy_static;
+extern crate rand;
 
 use std::collections::HashMap;
 use crossbeam::channel::{ unbounded, Sender, Receiver };
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
+use rand::Rng;
+use rand::seq::{SliceRandom, IteratorRandom};
 
 lazy_static! {
     static ref MENU_PRICES: HashMap<&'static str, f32> = {
@@ -19,6 +22,20 @@ lazy_static! {
         m.insert("Egg Bacon English Muffin Sandwich", 15.00);
         m
     };
+
+    static ref ITEMS: Vec<&'static str> = {
+        let mut v: Vec<&'static str> = Vec::new();
+
+        for drink in DRINKS {
+            v.push(drink);
+        }
+
+        for food in FOODS {
+            v.push(food);
+        }
+
+        v
+    };
 }
 
 static DRINKS: &'static [&'static str] = &["Drip Coffee", "Latte", "Mocha"];
@@ -31,7 +48,7 @@ struct Order {
 
 struct Item {
     item_name: String,
-    customer_id: Option<usize>
+    customer_id: usize
 }
 
 
@@ -48,10 +65,22 @@ impl Worker {
         Worker { id, order_inbox, cafe_bar }
     }
 
-    fn work(&self) -> JoinHandle<()> {
+    fn work(self) -> JoinHandle<()> {
         println!("Spawning worker {}", self.id);
-        thread::spawn(|| {
-            thread::sleep(Duration::from_millis(1000));
+        thread::spawn(move || {
+            loop {
+                match self.order_inbox.recv() {
+                    Ok(item) => {
+                        println!("Worker {} received item '{}' for customer {}", self.id, item.item_name, item.customer_id);
+                        thread::sleep(Duration::from_millis(50));
+                        self.cafe_bar.send(item);
+                    },
+                    Err(err) => {
+                        println!("Worker {} err'd on receiving order. Shutting down...: {}", self.id, err);
+                        break;
+                    },
+                }
+            }
         })
     }
 }
@@ -69,10 +98,24 @@ impl Cashier {
         Cashier { id, customer_orders, order_outbox }
     }
 
-    fn work(&self) -> JoinHandle<()> {
+    fn work(self) -> JoinHandle<()> {
         println!("Spawning cashier {}", self.id);
-        thread::spawn(|| {
-            thread::sleep(Duration::from_millis(1000));
+        thread::spawn( move || {
+            loop {
+                match self.customer_orders.recv() {
+                    Ok(order) => {
+                        println!("Cashier {} received order from customer {}", self.id, order.customer_id);
+                        for item in order.items {
+                            thread::sleep(Duration::from_millis(50));
+                            self.order_outbox.send(item);
+                        }
+                    },
+                    Err(err) => {
+                        println!("Cashier {} err'd on receiving order. Shutting down...: {}", self.id, err);
+                        break;
+                    },
+                }
+            }
         })
     }
 }
@@ -89,9 +132,9 @@ impl CafeBar {
         CafeBar { finished_items, customer_pickup }
     }
 
-    fn be_a_bar(&self) -> JoinHandle<()> {
+    fn be_a_bar(self) -> JoinHandle<()> {
         println!("Spawning CafeBar");
-        thread::spawn(|| {
+        thread::spawn(move || {
             thread::sleep(Duration::from_millis(1000));
         })
     }
@@ -108,11 +151,18 @@ struct Customer {
 
 impl Customer {
     fn new(id: usize, cashier: Sender<Order>, cafe_bar: Receiver<Item>) -> Self {
-        // TODO: generate random items for each order
+        let num_items = rand::thread_rng().gen_range(0, 10);
+        let items = (0..num_items).map(|i| {
+            Item {
+                item_name: ITEMS.choose(&mut rand::thread_rng()).unwrap().to_string(),
+                customer_id: id
+            }
+        }).collect::<Vec<Item>>();
+
         Customer {
             id,
             order: Order {
-                items: vec![],
+                items,
                 customer_id: id
             },
             cashier,
@@ -120,13 +170,16 @@ impl Customer {
         }
     }
 
-    fn work(&self) -> JoinHandle<()> {
+    fn work(self) -> JoinHandle<()> {
         println!("Spawning customer {}", self.id);
-        thread::spawn(|| {
+        thread::spawn(move || {
+            self.cashier.send(self.order);
             thread::sleep(Duration::from_millis(1000));
         })
     }
 }
+
+
 
 /*
 Different actor systems in a coffee:
