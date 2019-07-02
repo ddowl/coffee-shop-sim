@@ -84,6 +84,19 @@ struct CafeBar {
     customer_pickup: Sender<Item>,
 }
 
+impl CafeBar {
+    fn new(finished_items: Receiver<Item>, customer_pickup: Sender<Item>) -> Self {
+        CafeBar { finished_items, customer_pickup }
+    }
+
+    fn be_a_bar(&self) -> JoinHandle<()> {
+        println!("Spawning CafeBar");
+        thread::spawn(|| {
+            thread::sleep(Duration::from_millis(1000));
+        })
+    }
+}
+
 // A customer goes to the Cashier to make an Order, then occasionally checks the CafeBar to see
 // if their items have been made. They leave the store once they get all of the items in their order.
 struct Customer {
@@ -124,29 +137,32 @@ Different actor systems in a coffee:
 */
 
 fn main() {
-// Create a channel of unbounded capacity.
-    let (s, r) = unbounded();
-
-// Send a message into the channel.
-    s.send("Hello, world!").unwrap();
-
-// Receive the message from the channel.
-    assert_eq!(r.recv(), Ok("Hello, world!"));
-
-//    let handles = (1..10).map(|i| {
-//        Worker::new(None, None).work()
-//    }).collect();
-
     // Create dedicated channels
     let (bar_out, customer_in) = unbounded::<Item>();
-    let (bar_in, worker_out) = unbounded::<Item>();
+    let (worker_out, bar_in) = unbounded::<Item>();
     let (customer_out, cashier_in) = unbounded::<Order>();
     let (cashier_out, worker_in) = unbounded::<Item>();
 
+    // Spawn customers
     let customer_handles = (0..3).map(|id| {
         let c = Customer::new(id, customer_out.clone(), customer_in.clone());
         c.work()
     }).collect::<Vec<JoinHandle<()>>>();
+
+    // One cashier in our cafe
+    let cashier = Cashier::new(0, cashier_in, cashier_out);
+    cashier.work();
+
+    // Spawn workers
+    let worker_handles = (0..5).map(|id| {
+        let w = Worker::new(id, worker_in.clone(), worker_out.clone());
+        w.work()
+    }).collect::<Vec<JoinHandle<()>>>();
+
+    // Set up bar
+    let bar = CafeBar::new(bar_in, bar_out);
+    bar.be_a_bar();
+
 
     // wait for all customers to finish getting their orders
     for handle in customer_handles {
